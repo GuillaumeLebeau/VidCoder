@@ -297,6 +297,15 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Custom video player could not be found at {0}..
+        /// </summary>
+        public static string CustomVideoPlayerError {
+            get {
+                return ResourceManager.GetString("CustomVideoPlayerError", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Are you sure you want to delete {0} source file(s)/folder(s)?.
         /// </summary>
         public static string DeleteSourceFilesConfirmationMessage {
@@ -884,15 +893,6 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to picker.
-        /// </summary>
-        public static string PickerWord {
-            get {
-                return ResourceManager.GetString("PickerWord", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to Play.
         /// </summary>
         public static string Play {
@@ -1127,15 +1127,6 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to preset.
-        /// </summary>
-        public static string PresetWord {
-            get {
-                return ResourceManager.GetString("PresetWord", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to Preview.
         /// </summary>
         public static string PreviewMenuItem {
@@ -1264,7 +1255,7 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Are you sure you want to remove this {0}?.
+        ///   Looks up a localized string similar to Are you sure you want to remove this?.
         /// </summary>
         public static string RemoveConfirmMessage {
             get {
@@ -1273,7 +1264,7 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Remove {0}.
+        ///   Looks up a localized string similar to Remove.
         /// </summary>
         public static string RemoveConfirmTitle {
             get {
@@ -1327,7 +1318,7 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Are you sure you want to revert all unsaved changes to this {0}?.
+        ///   Looks up a localized string similar to Are you sure you want to revert all unsaved changes?.
         /// </summary>
         public static string RevertConfirmMessage {
             get {
@@ -1336,11 +1327,29 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Revert {0}.
+        ///   Looks up a localized string similar to Revert.
         /// </summary>
         public static string RevertConfirmTitle {
             get {
                 return ResourceManager.GetString("RevertConfirmTitle", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Do you want to save changes to your current picker?.
+        /// </summary>
+        public static string SaveChangesPickerMessage {
+            get {
+                return ResourceManager.GetString("SaveChangesPickerMessage", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Save current picker?.
+        /// </summary>
+        public static string SaveChangesPickerTitle {
+            get {
+                return ResourceManager.GetString("SaveChangesPickerTitle", resourceCulture);
             }
         }
         
@@ -1359,24 +1368,6 @@ namespace VidCoder.Resources {
         public static string SaveChangesPresetTitle {
             get {
                 return ResourceManager.GetString("SaveChangesPresetTitle", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to Do you want to save changes to your current {0}?.
-        /// </summary>
-        public static string SaveConfirmMessage {
-            get {
-                return ResourceManager.GetString("SaveConfirmMessage", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to Save current {0}?.
-        /// </summary>
-        public static string SaveConfirmTitle {
-            get {
-                return ResourceManager.GetString("SaveConfirmTitle", resourceCulture);
             }
         }
         
@@ -1561,6 +1552,15 @@ namespace VidCoder.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to You have a backed up version {0} file. Would you like to use it?.
+        /// </summary>
+        public static string UseBackupDatabaseLine {
+            get {
+                return ResourceManager.GetString("UseBackupDatabaseLine", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Configuration was corrupted and could not be loaded. Some of your settings may have been reset..
         /// </summary>
         public static string UserConfigCorrupted {
@@ -1584,6 +1584,15 @@ namespace VidCoder.Resources {
         public static string VideoLabel {
             get {
                 return ResourceManager.GetString("VideoLabel", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Error playing video..
+        /// </summary>
+        public static string VideoPlayError {
+            get {
+                return ResourceManager.GetString("VideoPlayError", resourceCulture);
             }
         }
         

@@ -10,7 +10,9 @@ using HandBrake.ApplicationServices.Interop.Json.Encode;
 using HandBrake.ApplicationServices.Interop.Json.Scan;
 using HandBrake.ApplicationServices.Interop.Json.Shared;
 using HandBrake.ApplicationServices.Interop.Model.Encoding;
+using Newtonsoft.Json.Linq;
 using VidCoderCommon.Extensions;
+using VidCoderCommon.Services;
 using Audio = HandBrake.ApplicationServices.Interop.Json.Encode.Audio;
 using Metadata = HandBrake.ApplicationServices.Interop.Json.Encode.Metadata;
 using Source = HandBrake.ApplicationServices.Interop.Json.Encode.Source;
@@ -33,6 +35,7 @@ namespace VidCoderCommon.Model
 		/// <param name="previewNumber">The preview number to start at (0-based). Leave off for a normal encode.</param>
 		/// <param name="previewSeconds">The number of seconds long to make the preview.</param>
 		/// <param name="previewCount">The total number of previews.</param>
+		/// <param name="logger">The logger to use.</param>
 		/// <returns></returns>
 		public static JsonEncodeObject CreateJsonObject(
 			VCJob job,
@@ -41,10 +44,26 @@ namespace VidCoderCommon.Model
 			bool dxvaDecoding,
 			int previewNumber = -1,
 			int previewSeconds = 0,
-			int previewCount = 0)
+			int previewCount = 0,
+			ILogger logger = null)
 		{
+			if (job == null)
+			{
+				throw new ArgumentNullException(nameof(job));
+			}
+
+			if (title == null)
+			{
+				throw new ArgumentNullException(nameof(title));
+			}
+
 			Geometry anamorphicSize = GetAnamorphicSize(job.EncodingProfile, title);
 			VCProfile profile = job.EncodingProfile;
+
+			if (profile == null)
+			{
+				throw new ArgumentException("job must have enoding profile.", nameof(job));
+			}
 
 			JsonEncodeObject encode = new JsonEncodeObject
 			{
@@ -56,7 +75,7 @@ namespace VidCoderCommon.Model
 				PAR = anamorphicSize.PAR,
 				Source = CreateSource(job, title, previewNumber, previewSeconds, previewCount),
 				Subtitle = CreateSubtitles(job),
-				Video = CreateVideo(job, title, previewSeconds, dxvaDecoding)
+				Video = CreateVideo(job, title, previewSeconds, dxvaDecoding, logger)
 			};
 
 			return encode;
@@ -105,7 +124,16 @@ namespace VidCoderCommon.Model
 			}
 			else
 			{
-				audio.CopyMask = new uint[] { NativeConstants.HB_ACODEC_ANY };
+				int anyCodec = 0;
+				foreach (var audioEncoder in HandBrakeEncoderHelpers.AudioEncoders)
+				{
+					if (audioEncoder.IsPassthrough && audioEncoder.ShortName.Contains(":"))
+					{
+						anyCodec |= audioEncoder.Id;
+					}
+				}
+
+				audio.CopyMask = new uint[] { (uint) anyCodec };
 			}
 
 			audio.AudioList = new List<AudioTrack>();
@@ -127,11 +155,20 @@ namespace VidCoderCommon.Model
 				uint outputCodec = (uint)encoder.Id;
 				bool isPassthrough = encoder.IsPassthrough;
 
+	            int passMask = 0;
+	            foreach (var audioEncoder in HandBrakeEncoderHelpers.AudioEncoders)
+	            {
+		            if (audioEncoder.IsPassthrough && audioEncoder.ShortName.Contains(":"))
+		            {
+			            passMask |= audioEncoder.Id;
+		            }
+	            }
+
 				if (encoding.PassthroughIfPossible && 
 					(encoder.Id == scanAudioTrack.Codec || 
 						inputCodec != null && (inputCodec.ShortName.ToLowerInvariant().Contains("aac") && encoder.ShortName.ToLowerInvariant().Contains("aac") ||
 						inputCodec.ShortName.ToLowerInvariant().Contains("mp3") && encoder.ShortName.ToLowerInvariant().Contains("mp3"))) &&
-					(inputCodec.Id & NativeConstants.HB_ACODEC_PASS_MASK) > 0)
+					(inputCodec.Id & passMask) > 0)
 				{
 					outputCodec = (uint)scanAudioTrack.Codec | NativeConstants.HB_ACODEC_PASS_FLAG;
 					isPassthrough = true;
@@ -228,7 +265,19 @@ namespace VidCoderCommon.Model
 				{
 					for (int i = 0; i < title.ChapterList.Count; i++)
 					{
-						chapterList.Add(new Chapter { Name = CreateDefaultChapterName(defaultChapterNameFormat, i + 1) });
+						SourceChapter sourceChapter = title.ChapterList[i];
+
+						string chapterName;
+						if (string.IsNullOrWhiteSpace(sourceChapter.Name))
+						{
+							chapterName = CreateDefaultChapterName(defaultChapterNameFormat, i + 1);
+						}
+						else
+						{
+							chapterName = sourceChapter.Name;
+						}
+
+						chapterList.Add(new Chapter { Name = chapterName });
 					}
 				}
 				else
@@ -283,143 +332,130 @@ namespace VidCoderCommon.Model
 			Filters filters = new Filters
 			{
 				FilterList = new List<Filter>(),
-				//Grayscale = profile.Grayscale
 			};
 
 			// Detelecine
-			if (profile.Detelecine != VCDetelecine.Off)
+			if (!string.IsNullOrEmpty(profile.Detelecine) && profile.Detelecine != "off")
 			{
-				string settings = profile.Detelecine == VCDetelecine.Custom ? profile.CustomDetelecine : null;
+				string settingsString = profile.Detelecine == "custom" ? profile.CustomDetelecine : null;
+				string presetString = profile.Detelecine == "custom" ? "custom" : "default";
 
-				Filter filterItem = new Filter { ID = (int)hb_filter_ids.HB_FILTER_DETELECINE, Settings = settings };
-				filters.FilterList.Add(filterItem);
-			}
-
-			// Decomb
-			if (profile.Decomb != VCDecomb.Off)
-			{
-				string options;
-				switch (profile.Decomb)
+				Filter filterItem = new Filter
 				{
-					case VCDecomb.Default:
-						options = null;
-						break;
-					case VCDecomb.Fast:
-						options = "7:2:6:9:1:80";
-						break;
-					case VCDecomb.Bob:
-						options = "455";
-						break;
-					default:
-						options = profile.CustomDecomb;
-						break;
-				}
-
-				Filter filterItem = new Filter { ID = (int)hb_filter_ids.HB_FILTER_DECOMB, Settings = options };
+					ID = (int)hb_filter_ids.HB_FILTER_DETELECINE,
+					Settings = GetFilterSettings(hb_filter_ids.HB_FILTER_DETELECINE, presetString, settingsString)
+				};
 				filters.FilterList.Add(filterItem);
 			}
 
 			// Deinterlace
-			if (profile.Deinterlace != VCDeinterlace.Off)
+			if (profile.DeinterlaceType != VCDeinterlace.Off)
 			{
-				string options;
-				switch (profile.Deinterlace)
+				hb_filter_ids filterId = profile.DeinterlaceType == VCDeinterlace.Yadif
+					? hb_filter_ids.HB_FILTER_DEINTERLACE
+					: hb_filter_ids.HB_FILTER_DECOMB;
+
+				JToken settings;
+				if (profile.DeinterlacePreset == "custom")
 				{
-					case VCDeinterlace.Fast:
-						options = "0";
-						break;
-					case VCDeinterlace.Slow:
-						options = "1";
-						break;
-					case VCDeinterlace.Slower:
-						options = "3";
-						break;
-					case VCDeinterlace.Bob:
-						options = "15";
-						break;
-					default:
-						options = profile.CustomDeinterlace;
-						break;
+					settings = GetFilterSettings(filterId, "custom", profile.CustomDeinterlace);
+				}
+				else
+				{
+					settings = GetFilterSettings(filterId, profile.DeinterlacePreset, null);
 				}
 
-				Filter filterItem = new Filter { ID = (int)hb_filter_ids.HB_FILTER_DEINTERLACE, Settings = options };
+				Filter filterItem = new Filter { ID = (int)filterId, Settings = settings };
+				filters.FilterList.Add(filterItem);
+			}
+
+			// Comb detect
+			if (profile.DeinterlaceType != VCDeinterlace.Off && !string.IsNullOrEmpty(profile.CombDetect) && profile.CombDetect != "off")
+			{
+				JToken settings;
+				if (profile.CombDetect == "custom")
+				{
+					settings = GetFilterSettings(hb_filter_ids.HB_FILTER_COMB_DETECT, "custom", profile.CustomCombDetect);
+				}
+				else
+				{
+					settings = GetFilterSettings(hb_filter_ids.HB_FILTER_COMB_DETECT, profile.CombDetect, null);
+				}
+
+				Filter filterItem = new Filter { ID = (int) hb_filter_ids.HB_FILTER_COMB_DETECT, Settings = settings };
 				filters.FilterList.Add(filterItem);
 			}
 
 			// VFR / CFR
 
 			// 0 - True VFR, 1 - Constant framerate, 2 - VFR with peak framerate
-			string framerateSettings;
-			if (profile.Framerate == 0)
+			if (profile.Framerate > 0 || profile.ConstantFramerate)
 			{
-				if (profile.ConstantFramerate)
+				JToken framerateSettings;
+				if (profile.Framerate == 0)
 				{
 					// CFR with "Same as Source". Use the title rate
 					framerateSettings = GetFramerateSettings(1, title.FrameRate.Num, title.FrameRate.Den);
 				}
 				else
 				{
-					// Pure VFR "Same as Source"
-					framerateSettings = "0";
+					int framerateMode;
+
+					// Specified framerate
+					if (profile.ConstantFramerate)
+					{
+						// Mark as pure CFR
+						framerateMode = 1;
+					}
+					else
+					{
+						// Mark as peak framerate
+						framerateMode = 2;
+					}
+
+					framerateSettings = GetFramerateSettings(
+						framerateMode,
+						27000000,
+						HandBrakeUnitConversionHelpers.FramerateToVrate(profile.Framerate));
 				}
+
+				Filter framerateShaper = new Filter { ID = (int)hb_filter_ids.HB_FILTER_VFR, Settings = framerateSettings };
+				filters.FilterList.Add(framerateShaper);
 			}
-			else
-			{
-				int framerateMode;
-
-				// Specified framerate
-				if (profile.ConstantFramerate)
-				{
-					// Mark as pure CFR
-					framerateMode = 1;
-				}
-				else
-				{
-					// Mark as peak framerate
-					framerateMode = 2;
-				}
-
-				framerateSettings = GetFramerateSettings(
-					framerateMode,
-					27000000,
-					HandBrakeUnitConversionHelpers.FramerateToVrate(profile.Framerate));
-			}
-
-			Filter framerateShaper = new Filter { ID = (int)hb_filter_ids.HB_FILTER_VFR, Settings = framerateSettings };
-			filters.FilterList.Add(framerateShaper);
 
 			// Deblock
 			if (profile.Deblock >= 5)
 			{
-				Filter filterItem = new Filter { ID = (int)hb_filter_ids.HB_FILTER_DEBLOCK, Settings = profile.Deblock.ToString(CultureInfo.InvariantCulture) };
+				JToken settings = GetFilterSettings(
+					hb_filter_ids.HB_FILTER_DEBLOCK,
+					string.Format(CultureInfo.InvariantCulture, "qp={0}", profile.Deblock));
+
+				Filter filterItem = new Filter { ID = (int)hb_filter_ids.HB_FILTER_DEBLOCK, Settings = settings };
 				filters.FilterList.Add(filterItem);
 			}
 
 			// Denoise
 			if (profile.DenoiseType != VCDenoise.Off)
 			{
-				hb_filter_ids id = profile.DenoiseType == VCDenoise.hqdn3d
+				hb_filter_ids filterId = profile.DenoiseType == VCDenoise.hqdn3d
 					? hb_filter_ids.HB_FILTER_HQDN3D
 					: hb_filter_ids.HB_FILTER_NLMEANS;
 
-				string settings;
+				JToken settings;
 				if (profile.UseCustomDenoise)
 				{
-					settings = profile.CustomDenoise;
+					settings = GetFilterSettings(filterId, "custom", profile.CustomDenoise);
 				}
 				else
 				{
-					IntPtr settingsPtr = HBFunctions.hb_generate_filter_settings(
-					(int)id,
-					profile.DenoisePreset,
-					profile.DenoiseTune);
-					settings = Marshal.PtrToStringAnsi(settingsPtr);
+					settings = GetFilterSettings(filterId, profile.DenoisePreset, profile.DenoiseTune);
 				}
 
-				Filter filterItem = new Filter { ID = (int)id, Settings = settings };
+				Filter filterItem = new Filter { ID = (int)filterId, Settings = settings };
 				filters.FilterList.Add(filterItem);
 			}
 
+			// Grayscale
 			if (profile.Grayscale)
 			{
 				Filter filterItem = new Filter { ID = (int)hb_filter_ids.HB_FILTER_GRAYSCALE, Settings = null };
@@ -428,64 +464,57 @@ namespace VidCoderCommon.Model
 
 			// CropScale Filter
 			VCCropping cropping = GetCropping(profile, title);
+			JToken cropFilterSettings = GetFilterSettings(
+				hb_filter_ids.HB_FILTER_CROP_SCALE,
+				string.Format(
+					CultureInfo.InvariantCulture,
+					"width={0}:height={1}:crop-top={2}:crop-bottom={3}:crop-left={4}:crop-right={5}",
+					anamorphicSize.Width,
+					anamorphicSize.Height,
+					cropping.Top,
+					cropping.Bottom,
+					cropping.Left,
+					cropping.Right));
+
 			Filter cropScale = new Filter
 			{
 				ID = (int)hb_filter_ids.HB_FILTER_CROP_SCALE,
-				Settings =
-					string.Format(
-						"{0}:{1}:{2}:{3}:{4}:{5}",
-						anamorphicSize.Width,
-						anamorphicSize.Height,
-						cropping.Top,
-						cropping.Bottom,
-						cropping.Left,
-						cropping.Right)
+				Settings = cropFilterSettings
 			};
 			filters.FilterList.Add(cropScale);
 
 			// Rotate
 			if (profile.FlipHorizontal || profile.FlipVertical || profile.Rotation != VCPictureRotation.None)
 			{
-				bool rotate90 = false;
-				bool flipHorizontal = profile.FlipHorizontal;
-				bool flipVertical = profile.FlipVertical;
+				int rotateDegrees = (int)profile.Rotation;
+				bool flipHorizontal = false;
 
-				switch (profile.Rotation)
+				if (profile.FlipHorizontal && profile.FlipVertical)
 				{
-					case VCPictureRotation.Clockwise90:
-						rotate90 = true;
-						break;
-					case VCPictureRotation.Clockwise180:
-						flipHorizontal = !flipHorizontal;
-						flipVertical = !flipVertical;
-						break;
-					case VCPictureRotation.Clockwise270:
-						rotate90 = true;
-						flipHorizontal = !flipHorizontal;
-						flipVertical = !flipVertical;
-						break;
+					rotateDegrees = (rotateDegrees + 180) % 360;
+				}
+				else if (profile.FlipHorizontal)
+				{
+					flipHorizontal = true;
+				}
+				else if (profile.FlipVertical)
+				{
+					rotateDegrees = (rotateDegrees + 180) % 360;
+					flipHorizontal = true;
 				}
 
-				int rotateSetting = 0;
-				if (flipVertical)
-				{
-					rotateSetting |= 1;
-				}
-
-				if (flipHorizontal)
-				{
-					rotateSetting |= 2;
-				}
-
-				if (rotate90)
-				{
-					rotateSetting |= 4;
-				}
+				JToken rotateSettings = GetFilterSettings(
+					hb_filter_ids.HB_FILTER_ROTATE,
+					string.Format(
+						CultureInfo.InvariantCulture,
+						"angle={0}:hflip={1}",
+						rotateDegrees,
+						flipHorizontal ? 1 : 0));
 
 				Filter rotateFilter = new Filter
 				{
 					ID = (int)hb_filter_ids.HB_FILTER_ROTATE,
-					Settings = rotateSetting.ToString(CultureInfo.InvariantCulture)
+					Settings = rotateSettings
 				};
 				filters.FilterList.Add(rotateFilter);
 			}
@@ -493,14 +522,33 @@ namespace VidCoderCommon.Model
 			return filters;
 		}
 
-		private static string GetFramerateSettings(int framerateMode, int framerateNumerator, int framerateDenominator)
+		private static JToken GetFilterSettings(hb_filter_ids filter, string custom)
 		{
-			return string.Format(
-				CultureInfo.InvariantCulture,
-				"{0}:{1}:{2}",
-				framerateMode,
-				framerateNumerator,
-				framerateDenominator);
+			return GetFilterSettings(filter, null, null, custom);
+		}
+
+		private static JToken GetFilterSettings(hb_filter_ids filter, string preset, string custom)
+		{
+			return GetFilterSettings(filter, preset, null, custom);
+		}
+
+		private static JToken GetFilterSettings(hb_filter_ids filter, string preset, string tune, string custom)
+		{
+			IntPtr settingsPtr = HBFunctions.hb_generate_filter_settings_json((int)filter, preset, tune, custom);
+			string unparsedJson = Marshal.PtrToStringAnsi(settingsPtr);
+			return JObject.Parse(unparsedJson);
+		}
+
+		private static JToken GetFramerateSettings(int framerateMode, int framerateNumerator, int framerateDenominator)
+		{
+			return GetFilterSettings(
+				hb_filter_ids.HB_FILTER_VFR, 
+				string.Format(
+					CultureInfo.InvariantCulture,
+					"mode={0}:rate={1}/{2}",
+					framerateMode,
+					framerateNumerator,
+					framerateDenominator));
 		}
 
 		private static Metadata CreateMetadata()
@@ -630,7 +678,7 @@ namespace VidCoderCommon.Model
 			return subtitles;
 		}
 
-		private static Video CreateVideo(VCJob job, SourceTitle title, int previewLengthSeconds, bool dxvaDecoding)
+		private static Video CreateVideo(VCJob job, SourceTitle title, int previewLengthSeconds, bool dxvaDecoding, ILogger logger)
 		{
 			Video video = new Video();
 			VCProfile profile = job.EncodingProfile;
@@ -663,7 +711,7 @@ namespace VidCoderCommon.Model
 			switch (profile.VideoEncodeRateType)
 			{
 				case VCVideoEncodeRateType.TargetSize:
-					video.Bitrate = CalculateBitrate(job, title, profile.TargetSize, previewLengthSeconds);
+					video.Bitrate = CalculateBitrate(job, title, profile.TargetSize, previewLengthSeconds, logger);
 					video.TwoPass = profile.TwoPass;
 					video.Turbo = profile.TurboFirstPass;
 					break;
@@ -689,22 +737,31 @@ namespace VidCoderCommon.Model
 		/// </summary>
 		/// <param name="job">The encode job.</param>
 		/// <param name="title">The title being encoded.</param>
-		/// <param name="sizeMB">The target size in MB.</param>
+		/// <param name="sizeMb">The target size in MB.</param>
 		/// <param name="overallSelectedLengthSeconds">The currently selected encode length. Used in preview
 		/// for calculating bitrate when the target size would be wrong.</param>
+		/// <param name="logger">The logger to use.</param>
 		/// <returns>The video bitrate in kbps.</returns>
-		public static int CalculateBitrate(VCJob job, SourceTitle title, int sizeMB, double overallSelectedLengthSeconds = 0)
+		public static int CalculateBitrate(VCJob job, SourceTitle title, int sizeMb, double overallSelectedLengthSeconds = 0, ILogger logger = null)
 		{
 			bool isPreview = overallSelectedLengthSeconds > 0;
 
 			double titleLengthSeconds = GetJobLength(job, title).TotalSeconds;
 
+			logger?.Log($"Calculating bitrate - Title length: {titleLengthSeconds} seconds");
 
-			long availableBytes = ((long)sizeMB) * 1024 * 1024;
+			if (overallSelectedLengthSeconds > 0)
+			{
+				logger?.Log($"Calculating bitrate - Selected value length: {overallSelectedLengthSeconds} seconds");
+			}
+
+			long availableBytes = ((long)sizeMb) * 1024 * 1024;
 			if (isPreview)
 			{
 				availableBytes = (long)(availableBytes * (overallSelectedLengthSeconds / titleLengthSeconds));
 			}
+
+			logger?.Log($"Calculating bitrate - Available bytes: {availableBytes}");
 
 			VCProfile profile = job.EncodingProfile;
 
@@ -722,12 +779,21 @@ namespace VidCoderCommon.Model
 				outputFramerate = profile.Framerate;
 			}
 
+			logger?.Log($"Calculating bitrate - Output framerate: {outputFramerate}");
+
 			long frames = (long)(lengthSeconds * outputFramerate);
 
-			availableBytes -= frames * ContainerOverheadBytesPerFrame;
+			long containerOverheadBytes = frames * ContainerOverheadBytesPerFrame;
+			logger?.Log($"Calculating bitrate - Container overhead: {containerOverheadBytes} bytes");
+
+			availableBytes -= containerOverheadBytes;
 
 			List<Tuple<AudioEncoding, int>> outputTrackList = GetOutputTracks(job, title);
-			availableBytes -= GetAudioSize(job, lengthSeconds, title, outputTrackList);
+			long audioSizeBytes = GetAudioSize(lengthSeconds, title, outputTrackList, logger);
+			logger?.Log($"Calculating bitrate - Audio size: {audioSizeBytes} bytes");
+			availableBytes -= audioSizeBytes;
+
+			logger?.Log($"Calculating bitrate - Available bytes minus container and audio: {availableBytes}");
 
 			if (availableBytes < 0)
 			{
@@ -736,7 +802,10 @@ namespace VidCoderCommon.Model
 
 			// Video bitrate is in kilobits per second, or where 1 kbps is 1000 bits per second.
 			// So 1 kbps is 125 bytes per second.
-			return (int)(availableBytes / (125 * lengthSeconds));
+			int resultBitrateKilobitsPerSecond = (int)(availableBytes / (125 * lengthSeconds));
+
+			logger?.Log($"Calculating bitrate - Bitrate result (kbps): {resultBitrateKilobitsPerSecond}");
+			return resultBitrateKilobitsPerSecond;
 		}
 
 		/// <summary>
@@ -773,7 +842,7 @@ namespace VidCoderCommon.Model
 			totalBytes += frames * ContainerOverheadBytesPerFrame;
 
 			List<Tuple<AudioEncoding, int>> outputTrackList = GetOutputTracks(job, title);
-			totalBytes += GetAudioSize(job, lengthSeconds, title, outputTrackList);
+			totalBytes += GetAudioSize(lengthSeconds, title, outputTrackList);
 
 			return (double)totalBytes / 1024 / 1024;
 		}
@@ -810,14 +879,15 @@ namespace VidCoderCommon.Model
 		/// <summary>
 		/// Gets the size in bytes for the audio with the given parameters.
 		/// </summary>
-		/// <param name="job">The encode job.</param>
 		/// <param name="lengthSeconds">The length of the encode in seconds.</param>
 		/// <param name="title">The title to encode.</param>
 		/// <param name="outputTrackList">The list of tracks to encode.</param>
+		/// <param name="logger">The logger to use.</param>
 		/// <returns>The size in bytes for the audio with the given parameters.</returns>
-		private static long GetAudioSize(VCJob job, double lengthSeconds, SourceTitle title, List<Tuple<AudioEncoding, int>> outputTrackList)
+		private static long GetAudioSize(double lengthSeconds, SourceTitle title, List<Tuple<AudioEncoding, int>> outputTrackList, ILogger logger = null)
 		{
 			long audioBytes = 0;
+			int outputTrackNumber = 1;
 
 			foreach (Tuple<AudioEncoding, int> outputTrack in outputTrackList)
 			{
@@ -833,11 +903,15 @@ namespace VidCoderCommon.Model
 				{
 					// Input bitrate is in bits/second.
 					audioBitrate = track.BitRate / 8;
+
+					logger?.Log($"Calculating bitrate - Audio track {outputTrackNumber} - Track is passthrough. {audioBitrate} bytes/second");
 				}
 				else if (encoding.EncodeRateType == AudioEncodeRateType.Quality)
 				{
 					// Can't predict size of quality targeted audio encoding.
 					audioBitrate = 0;
+
+					logger?.Log($"Calculating bitrate - Audio track {outputTrackNumber} - Track is quality targeted. Assuming 0 byte overhead.");
 				}
 				else
 				{
@@ -845,6 +919,8 @@ namespace VidCoderCommon.Model
 					if (encoding.Bitrate > 0)
 					{
 						outputBitrate = encoding.Bitrate;
+
+						logger?.Log($"Calculating bitrate - Audio track {outputTrackNumber} - Output bitrate set at {outputBitrate} kbps");
 					}
 					else
 					{
@@ -852,16 +928,26 @@ namespace VidCoderCommon.Model
 							audioEncoder,
 							encoding.SampleRateRaw == 0 ? track.SampleRate : encoding.SampleRateRaw,
 							HandBrakeEncoderHelpers.SanitizeMixdown(HandBrakeEncoderHelpers.GetMixdown(encoding.Mixdown), audioEncoder, (ulong)track.ChannelLayout));
+
+						logger?.Log($"Calculating bitrate - Audio track {outputTrackNumber} - Output bitrate is Auto, will be {outputBitrate} kbps");
 					}
 
 					// Output bitrate is in kbps.
 					audioBitrate = outputBitrate * 1000 / 8;
+
+					logger?.Log($"Calculating bitrate - Audio track {outputTrackNumber} - {audioBitrate} bytes/second");
 				}
 
-				audioBytes += (long)(lengthSeconds * audioBitrate);
+				long audioTrackBytes = (long)(lengthSeconds * audioBitrate);
+				logger?.Log($"Calculating bitrate - Audio track {outputTrackNumber} - Audio data is {audioTrackBytes} bytes");
+				audioBytes += audioTrackBytes;
 
 				// Audio overhead
-				audioBytes += encoding.SampleRateRaw * ContainerOverheadBytesPerFrame / samplesPerFrame;
+				long audioTrackOverheadBytes = encoding.SampleRateRaw * ContainerOverheadBytesPerFrame / samplesPerFrame;
+				logger?.Log($"Calculating bitrate - Audio track {outputTrackNumber} - Overhead is {audioTrackOverheadBytes} bytes");
+				audioBytes += audioTrackOverheadBytes;
+
+				outputTrackNumber++;
 			}
 
 			return audioBytes;
@@ -899,6 +985,16 @@ namespace VidCoderCommon.Model
 
 		public static Geometry GetAnamorphicSize(VCProfile profile, SourceTitle title)
 		{
+			if (profile == null)
+			{
+				throw new ArgumentNullException(nameof(profile));
+			}
+
+			if (title == null)
+			{
+				throw new ArgumentNullException(nameof(title));
+			}
+
 			int modulus;
 			if (profile.Anamorphic == VCAnamorphic.Loose || profile.Anamorphic == VCAnamorphic.Custom)
 			{

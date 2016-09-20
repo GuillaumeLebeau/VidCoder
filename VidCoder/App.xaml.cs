@@ -83,6 +83,13 @@ namespace VidCoder
 			    CultureInfo.DefaultThreadCurrentUICulture = cultureInfo;
 			}
 
+			if (Config.UseCustomPreviewFolder && FileUtilities.HasWriteAccessOnFolder(Config.PreviewOutputFolder))
+			{
+				Environment.SetEnvironmentVariable("TMP", Config.PreviewOutputFolder, EnvironmentVariableTarget.Process);
+				FileUtilities.OverrideTempFolder = true;
+				FileUtilities.TempFolderOverride = Config.PreviewOutputFolder;
+			}
+
 			var updater = Ioc.Get<IUpdater>();
 			updater.HandlePendingUpdate();
 
@@ -100,6 +107,11 @@ namespace VidCoder
 			var mainVM = new MainViewModel();
 			Ioc.Get<IWindowManager>().OpenWindow(mainVM);
 			mainVM.OnLoaded();
+
+		    if (e.Args.Length > 0)
+		    {
+                mainVM.HandlePaths(new List<string> { e.Args[0] });
+		    }
 
 			if (!Utilities.IsPortable && IsPrimaryInstance)
 			{

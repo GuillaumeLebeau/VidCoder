@@ -274,10 +274,16 @@ namespace VidCoder.Services.Windows
 		/// Gets the view for the given viewmodel.
 		/// </summary>
 		/// <param name="viewModel">The viewmodel.</param>
-		/// <returns>The view for the given viewmodel.</returns>
+		/// <returns>The view for the given viewmodel, or null if the window could not be found.</returns>
 		public Window GetView(object viewModel)
 		{
-			return this.openWindows[viewModel];
+			Window window;
+			if (this.openWindows.TryGetValue(viewModel, out window))
+			{
+				return window;
+			}
+
+			return null;
 		}
 
 		/// <summary>
@@ -449,120 +455,8 @@ namespace VidCoder.Services.Windows
 			if (data != null && data.ContainsFileDropList())
 			{
 				StringCollection itemList = data.GetFileDropList();
-				if (itemList.Count > 0)
-				{
-					if (itemList.Count == 1)
-					{
-						string item = itemList[0];
-
-						string extension = Path.GetExtension(item);
-						if (extension != null)
-						{
-							extension = extension.ToLowerInvariant();
-						}
-
-						if (extension == ".xml" || extension == ".vjpreset")
-						{
-							// It's a preset
-							try
-							{
-								Preset preset = Ioc.Get<IPresetImportExport>().ImportPreset(itemList[0]);
-								Ioc.Get<IMessageBoxService>().Show(string.Format(MainRes.PresetImportSuccessMessage, preset.Name), CommonRes.Success, System.Windows.MessageBoxButton.OK);
-							}
-							catch (Exception)
-							{
-								Ioc.Get<IMessageBoxService>().Show(MainRes.PresetImportErrorMessage, MainRes.ImportErrorTitle, System.Windows.MessageBoxButton.OK);
-							}
-						}
-						else if (Utilities.IsDiscFolder(item))
-						{
-							// It's a disc folder or disc
-							Ioc.Get<MainViewModel>().SetSource(item);
-						}
-						else
-						{
-							// It is a video file or folder full of video files
-							HandleDropAsPaths(itemList);
-						}
-					}
-					else
-					{
-						// With multiple items, treat it as a list video files/disc folders or folders full of those items
-						HandleDropAsPaths(itemList);
-					}
-				}
+                Ioc.Get<MainViewModel>().HandlePaths(itemList.Cast<string>().ToList());
 			}
-		}
-
-		private static void HandleDropAsPaths(StringCollection itemList)
-		{
-			List<SourcePath> fileList = GetPathList(itemList);
-			if (fileList.Count > 0)
-			{
-				if (fileList.Count == 1)
-				{
-					Ioc.Get<MainViewModel>().SetSourceFromFile(fileList[0].Path);
-				}
-				else
-				{
-					Ioc.Get<ProcessingService>().QueueMultiple(fileList);
-				}
-			}
-		}
-
-		// Gets a file/video folder list from a list of files/directories
-		private static List<SourcePath> GetPathList(StringCollection itemList)
-		{
-			var videoExtensions = new List<string>();
-			string extensionsString = Config.VideoFileExtensions;
-			string[] rawExtensions = extensionsString.Split(',', ';');
-			foreach (string rawExtension in rawExtensions)
-			{
-				string extension = rawExtension.Trim();
-				if (extension.Length > 0)
-				{
-					if (!extension.StartsWith("."))
-					{
-						extension = "." + extension;
-					}
-
-					videoExtensions.Add(extension);
-				}
-			}
-
-			var pathList = new List<SourcePath>();
-			foreach (string item in itemList)
-			{
-				var fileAttributes = File.GetAttributes(item);
-				if ((fileAttributes & FileAttributes.Directory) == FileAttributes.Directory)
-				{
-					// Path is a directory
-					if (Utilities.IsDiscFolder(item))
-					{
-						// If it's a disc folder, add it
-						pathList.Add(new SourcePath { Path = item, SourceType = SourceType.VideoFolder });
-					}
-					else
-					{
-						string parentFolder = Path.GetDirectoryName(item);
-						pathList.AddRange(
-							Utilities.GetFilesOrVideoFolders(item, videoExtensions)
-							.Select(p => new SourcePath
-							{
-								Path = p,
-								ParentFolder = parentFolder,
-								SourceType = SourceType.None
-							}));
-					}
-				}
-				else
-				{
-					// Path is a file
-					pathList.Add(new SourcePath { Path = item, SourceType = SourceType.File });
-				}
-			}
-
-			return pathList;
 		}
 
 		/// <summary>
@@ -680,6 +574,12 @@ namespace VidCoder.Services.Windows
 		private static Window CreateWindow(Type viewModelType)
 		{
 			string typeName = viewModelType.Name;
+			int backTickIndex = typeName.IndexOf('`');
+			if (backTickIndex > 0)
+			{
+				typeName = typeName.Substring(0, backTickIndex);
+			}
+
 			string baseName;
 			string suffix;
 

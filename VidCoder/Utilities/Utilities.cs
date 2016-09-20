@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Text;
 using System.Windows;
 using HandBrake.ApplicationServices.Interop.Json.Scan;
+using VidCoder.Extensions;
 using VidCoder.Model;
 using VidCoder.Resources;
 using VidCoder.Services;
@@ -21,8 +22,8 @@ namespace VidCoder
 	public static class Utilities
 	{
 		public const string TimeFormat = @"h\:mm\:ss";
-		public const int CurrentDatabaseVersion = 30;
-		public const int LastUpdatedEncodingProfileDatabaseVersion = 30;
+		public const int CurrentDatabaseVersion = 32;
+		public const int LastUpdatedEncodingProfileDatabaseVersion = 32;
 		public const int LastUpdatedPickerDatabaseVersion = 30;
 
 		private const string AppDataFolderName = "VidCoder";
@@ -63,23 +64,23 @@ namespace VidCoder
 			}
 		}
 
-		public static string CurrentVersion
+		public static Version CurrentVersion
 		{
-			get
-			{
-				return Assembly.GetExecutingAssembly().GetName().Version.ToString();
-			}
+			get { return Assembly.GetExecutingAssembly().GetName().Version; }
 		}
 
+		/// <summary>
+		/// Displays version number with architecture and optional Beta marker.
+		/// </summary>
 		public static string VersionString
 		{
 			get
 			{
 #pragma warning disable 162
 #if BETA
-				return string.Format(MiscRes.BetaVersionFormat, CurrentVersion, Architecture);
+				return string.Format(MiscRes.BetaVersionFormat, CurrentVersion.ToShortString(), Architecture);
 #endif
-				return string.Format(MiscRes.VersionFormat, CurrentVersion, Architecture);
+				return string.Format(MiscRes.VersionFormat, CurrentVersion.ToShortString(), Architecture);
 #pragma warning restore 162
 			}
 		}
@@ -622,7 +623,7 @@ namespace VidCoder
 			}
 			catch (UnauthorizedAccessException ex)
 			{
-				Ioc.Get<ILogger>().Log("Could not determine if folder was disc: " + ex);
+				Ioc.Get<IAppLogger>().Log("Could not determine if folder was disc: " + ex);
 				return false;
 			}
 		}

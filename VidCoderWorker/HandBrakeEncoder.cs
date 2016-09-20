@@ -30,8 +30,18 @@ namespace VidCoderWorker
 			bool dxvaDecoding,
 			double minTitleDurationSeconds,
 			string defaultChapterNameFormat,
-			double cpuThrottlingFraction)
+			double cpuThrottlingFraction,
+			string tempFolder)
 		{
+#if DEBUG_REMOTE
+			Debugger.Launch();
+#endif
+
+			if (!string.IsNullOrEmpty(tempFolder))
+			{
+				Environment.SetEnvironmentVariable("TMP", tempFolder, EnvironmentVariableTarget.Process);
+			}
+
 			CurrentEncoder = this;
 			this.callback = OperationContext.Current.GetCallbackChannel<IHandBrakeEncoderCallback>();
 
@@ -91,19 +101,20 @@ namespace VidCoderWorker
 					try
 					{
 						SourceTitle encodeTitle = this.instance.Titles.TitleList.FirstOrDefault(title => title.Index == job.Title);
-						JsonEncodeObject encodeObject = JsonEncodeFactory.CreateJsonObject(
-							job,
-							encodeTitle,
-							defaultChapterNameFormat,
-							dxvaDecoding,
-							previewNumber,
-							previewSeconds,
-							previewCount);
-
-						this.callback.OnVidCoderMessageLogged("Encode JSON:" + Environment.NewLine + JsonConvert.SerializeObject(encodeObject, Formatting.Indented));
-
 						if (encodeTitle != null)
 						{
+							JsonEncodeObject encodeObject = JsonEncodeFactory.CreateJsonObject(
+								job,
+								encodeTitle,
+								defaultChapterNameFormat,
+								dxvaDecoding,
+								previewNumber,
+								previewSeconds,
+								previewCount,
+								new WorkerLogger(this.callback));
+
+							////this.callback.OnVidCoderMessageLogged("Encode JSON:" + Environment.NewLine + JsonConvert.SerializeObject(encodeObject, Formatting.Indented));
+
 							lock (this.encodeLock)
 							{
 								this.instance.StartEncode(encodeObject);
@@ -113,7 +124,7 @@ namespace VidCoderWorker
 						}
 						else
 						{
-							this.callback.OnEncodeComplete(true);
+							this.callback.OnEncodeComplete(error: true);
 							this.CleanUpAndSignalCompletion();
 						}
 					}
@@ -142,7 +153,7 @@ namespace VidCoderWorker
 					}
 					catch (CommunicationException exception)
 					{
-						WorkerLogger.Log("Got exception when reporting completion: " + exception, isError: true);
+						WorkerErrorLogger.LogError("Got exception when reporting completion: " + exception, isError: true);
 					}
 					finally
 					{
@@ -236,7 +247,7 @@ namespace VidCoderWorker
 			}
 			catch (CommunicationException exception)
 			{
-				WorkerLogger.Log("Got exception: " + exception, isError: true);
+				WorkerErrorLogger.LogError("Got exception: " + exception, isError: true);
 
 				this.StopEncodeIfPossible();
 			}

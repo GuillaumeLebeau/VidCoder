@@ -1,7 +1,7 @@
 Installer/BuiltInstallers/*
 Flags/*
 packages/*
-ResourcesImport/*
+Import/*
 .vs
 *.pdn
 */bin/*
@@ -11,4 +11,3 @@ ResourcesImport/*
 *.csproj.user
 *.user
 Installer/Files/*
-vidcoder.zip

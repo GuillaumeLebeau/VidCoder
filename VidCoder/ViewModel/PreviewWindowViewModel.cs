@@ -33,7 +33,7 @@ namespace VidCoder.ViewModel
 		private VCJob job;
 		private HandBrakeInstance originalScanInstance;
 		private IEncodeProxy encodeProxy;
-		private ILogger logger = Ioc.Get<ILogger>();
+		private IAppLogger logger = Ioc.Get<IAppLogger>();
 		private int selectedPreview;
 		private string previewFilePath;
 		private bool cancelPending;
@@ -846,7 +846,7 @@ namespace VidCoder.ViewModel
 				this.HasPreview = false;
 				this.Title = PreviewRes.NoVideoSourceTitle;
 
-				Ioc.Get<ILogger>().LogError("HandBrake returned a negative pixel aspect ratio. Cannot show preview.");
+				Ioc.Get<IAppLogger>().LogError("HandBrake returned a negative pixel aspect ratio. Cannot show preview.");
 				return;
 			}
 
@@ -958,7 +958,7 @@ namespace VidCoder.ViewModel
 					FileUtilities.DeleteDirectory(Path.Combine(processCacheFolder, i.ToString(CultureInfo.InvariantCulture)));
 				}
 			}
-			catch (IOException)
+			catch (Exception)
 			{
 				// Ignore. Later checks will clear the cache.
 			}

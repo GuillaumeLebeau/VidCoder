@@ -30,7 +30,7 @@ namespace VidCoder.ViewModel
 		private HandBrakeInstance scanInstance;
 
 		private IUpdater updater = Ioc.Get<IUpdater>();
-		private ILogger logger = Ioc.Get<ILogger>();
+		private IAppLogger logger = Ioc.Get<IAppLogger>();
 		private OutputPathService outputPathService;
 		private OutputSizeService outputSizeService;
 		private PresetsService presetsService;
@@ -422,13 +422,13 @@ namespace VidCoder.ViewModel
 			this.audioChoices.Changed
 				.Subscribe(_ =>
 				{
-					this.AudioChoiceChanged?.Invoke(this, new EventArgs());
+					this.AudioChoiceChanged?.Invoke(this, EventArgs.Empty);
 				});
 
 			this.audioChoices.ItemChanged
 				.Subscribe(_ =>
 				{
-					this.AudioChoiceChanged?.Invoke(this, new EventArgs());
+					this.AudioChoiceChanged?.Invoke(this, EventArgs.Empty);
 				});
 
 			this.WindowMenuItems = new List<WindowMenuItemViewModel>();
@@ -489,7 +489,127 @@ namespace VidCoder.ViewModel
 			this.DriveCollection = newDriveCollection;
 		}
 
-		public bool SetSourceFromFile()
+        /// <summary>
+        /// Handles a list of paths given by drag/drop
+        /// </summary>
+        /// <param name="paths">The paths to process.</param>
+	    public void HandlePaths(IList<string> paths)
+	    {
+            if (paths.Count > 0)
+            {
+                if (paths.Count == 1)
+                {
+                    string item = paths[0];
+
+                    string extension = Path.GetExtension(item);
+                    if (extension != null)
+                    {
+                        extension = extension.ToLowerInvariant();
+                    }
+
+                    if (extension == ".xml" || extension == ".vjpreset")
+                    {
+                        // It's a preset
+                        try
+                        {
+                            Preset preset = Ioc.Get<IPresetImportExport>().ImportPreset(paths[0]);
+                            Ioc.Get<IMessageBoxService>().Show(string.Format(MainRes.PresetImportSuccessMessage, preset.Name), CommonRes.Success, System.Windows.MessageBoxButton.OK);
+                        }
+                        catch (Exception)
+                        {
+                            Ioc.Get<IMessageBoxService>().Show(MainRes.PresetImportErrorMessage, MainRes.ImportErrorTitle, System.Windows.MessageBoxButton.OK);
+                        }
+                    }
+                    else if (Utilities.IsDiscFolder(item))
+                    {
+                        // It's a disc folder or disc
+                        this.SetSource(item);
+                    }
+                    else
+                    {
+                        // It is a video file or folder full of video files
+                        this.HandleDropAsPaths(paths);
+                    }
+                }
+                else
+                {
+                    // With multiple items, treat it as a list video files/disc folders or folders full of those items
+                    this.HandleDropAsPaths(paths);
+                }
+            }
+        }
+
+        private void HandleDropAsPaths(IList<string> itemList)
+        {
+            List<SourcePath> fileList = GetPathList(itemList);
+            if (fileList.Count > 0)
+            {
+                if (fileList.Count == 1)
+                {
+                    this.SetSourceFromFile(fileList[0].Path);
+                }
+                else
+                {
+                    Ioc.Get<ProcessingService>().QueueMultiple(fileList);
+                }
+            }
+        }
+
+        private static List<SourcePath> GetPathList(IList<string> itemList)
+        {
+            var videoExtensions = new List<string>();
+            string extensionsString = Config.VideoFileExtensions;
+            string[] rawExtensions = extensionsString.Split(',', ';');
+            foreach (string rawExtension in rawExtensions)
+            {
+                string extension = rawExtension.Trim();
+                if (extension.Length > 0)
+                {
+                    if (!extension.StartsWith("."))
+                    {
+                        extension = "." + extension;
+                    }
+
+                    videoExtensions.Add(extension);
+                }
+            }
+
+            var pathList = new List<SourcePath>();
+            foreach (string item in itemList)
+            {
+                var fileAttributes = File.GetAttributes(item);
+                if ((fileAttributes & FileAttributes.Directory) == FileAttributes.Directory)
+                {
+                    // Path is a directory
+                    if (Utilities.IsDiscFolder(item))
+                    {
+                        // If it's a disc folder, add it
+                        pathList.Add(new SourcePath { Path = item, SourceType = SourceType.VideoFolder });
+                    }
+                    else
+                    {
+                        string parentFolder = Path.GetDirectoryName(item);
+                        pathList.AddRange(
+                            Utilities.GetFilesOrVideoFolders(item, videoExtensions)
+                            .Select(p => new SourcePath
+                            {
+                                Path = p,
+                                ParentFolder = parentFolder,
+                                SourceType = SourceType.None
+                            }));
+                    }
+                }
+                else
+                {
+                    // Path is a file
+                    pathList.Add(new SourcePath { Path = item, SourceType = SourceType.File });
+                }
+            }
+
+            return pathList;
+        }
+
+        public bool SetSourceFromFile()
 		{
 			if (this.SourceSelectionExpanded)
 			{
@@ -634,7 +754,7 @@ namespace VidCoder.ViewModel
 			if (this.processingService.Encoding)
 			{
 				// If so, stop it.
-				this.processingService.EncodeProxy.StopAndWait();
+				this.processingService.Stop(EncodeCompleteReason.AppExit);
 			}
 
 			this.windowManager.CloseTrackedWindows();
@@ -651,6 +771,7 @@ namespace VidCoder.ViewModel
 
 			FileCleanup.CleanOldLogs();
 			FileCleanup.CleanPreviewFileCache();
+			FileCleanup.CleanHandBrakeTempFiles();
 
 			if (!Utilities.IsPortable)
 			{
@@ -1625,7 +1746,7 @@ namespace VidCoder.ViewModel
 		{
 			get
 			{
-				return "VidCoder " + Utilities.CurrentVersion;
+				return "VidCoder " + Utilities.CurrentVersion.ToShortString();
 			}
 		}
 
@@ -2142,10 +2263,7 @@ namespace VidCoder.ViewModel
 					{
 						this.SelectedSource = null;
 
-						if (this.ScanCancelled != null)
-						{
-							this.ScanCancelled(this, new EventArgs());
-						}
+						this.ScanCancelled?.Invoke(this, EventArgs.Empty);
 
 						this.logger.Log("Scan cancelled");
 

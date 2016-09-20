@@ -40,7 +40,7 @@ namespace VidCoder.Services
 				}
 				catch (NotSupportedException)
 				{
-					Ioc.Get<ILogger>().Log("Could not recognize initial directory " + initialDirectory);
+					Ioc.Get<IAppLogger>().Log("Could not recognize initial directory " + initialDirectory);
 				}
 			}
 
@@ -176,13 +176,27 @@ namespace VidCoder.Services
 
 		public void PlayVideo(string fileName)
 		{
-			if (Config.UseCustomVideoPlayer && !string.IsNullOrWhiteSpace(Config.CustomVideoPlayer))
+			try
 			{
-				Process.Start(Config.CustomVideoPlayer, "\"" + fileName + "\"");
+				if (Config.UseCustomVideoPlayer && !string.IsNullOrWhiteSpace(Config.CustomVideoPlayer))
+				{
+					if (File.Exists(Config.CustomVideoPlayer))
+					{
+						Process.Start(Config.CustomVideoPlayer, "\"" + fileName + "\"");
+					}
+					else
+					{
+						MessageBox.Show(string.Format(MainRes.CustomVideoPlayerError, Config.CustomVideoPlayer));
+					}
+				}
+				else
+				{
+					this.LaunchFile(fileName);
+				}
 			}
-			else
+			catch (Win32Exception)
 			{
-				this.LaunchFile(fileName);
+				MessageBox.Show(MainRes.VideoPlayError);
 			}
 		}
 	}
